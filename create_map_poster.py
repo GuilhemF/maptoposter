@@ -25,16 +25,17 @@ import osmnx as ox
 from geopandas import GeoDataFrame
 from geopy.geocoders import Nominatim
 from lat_lon_parser import parse
+from font_management import load_fonts
 from matplotlib.font_manager import FontProperties
 from networkx import MultiDiGraph
 from shapely.geometry import Point
 from tqdm import tqdm
 
-from font_management import load_fonts
-
 
 class CacheError(Exception):
     """Raised when a cache operation fails."""
+
+    pass
 
 
 CACHE_DIR_PATH = os.environ.get("CACHE_DIR", "cache")
@@ -44,8 +45,6 @@ CACHE_DIR.mkdir(exist_ok=True)
 THEMES_DIR = "themes"
 FONTS_DIR = "fonts"
 POSTERS_DIR = "posters"
-
-FILE_ENCODING = "utf-8"
 
 FONTS = load_fonts()
 
@@ -199,7 +198,7 @@ def load_theme(theme_name="terracotta"):
             "road_default": "#D9A08A",
         }
 
-    with open(theme_file, "r", encoding=FILE_ENCODING) as f:
+    with open(theme_file, "r") as f:
         theme = json.load(f)
         print(f"✓ Loaded theme: {theme.get('name', theme_name)}")
         if "description" in theme:
@@ -493,6 +492,7 @@ def create_poster(
     display_city=None,
     display_country=None,
     fonts=None,
+    show_point=False,
 ):
     """
     Generate a complete map poster with roads, water, parks, and typography.
@@ -542,7 +542,7 @@ def create_poster(
         water = fetch_features(
             point,
             compensated_dist,
-            tags={"natural": ["water", "bay", "strait"], "waterway": "riverbank"},
+            tags={"natural": "water", "waterway": "riverbank"},
             name="water",
         )
         pbar.update(1)
@@ -615,38 +615,64 @@ def create_poster(
     create_gradient_fade(ax, THEME['gradient_color'], location='bottom', zorder=10)
     create_gradient_fade(ax, THEME['gradient_color'], location='top', zorder=10)
 
+    # Layer 4: Coordinate Marker (Optional)
+    if show_point:
+        # Project center point to graph CRS
+        center_proj, _ = ox.projection.project_geometry(Point(point[1], point[0]), crs="EPSG:4326", to_crs=g_proj.graph["crs"])
+        
+        # Plot marker
+        ax.scatter(
+            center_proj.x, 
+            center_proj.y, 
+            s=200, 
+            c=THEME["text"], 
+            edgecolors=THEME["bg"], 
+            linewidth=2, 
+            zorder=12,
+            marker='o'
+        )
+        # Add a small dot in the center for precision
+        ax.scatter(
+            center_proj.x,
+            center_proj.y,
+            s=20,
+            c=THEME["bg"],
+            zorder=13,
+            marker='o'
+        )
+
     # Calculate scale factor based on smaller dimension (reference 12 inches)
     # This ensures text scales properly for both portrait and landscape orientations
     scale_factor = min(height, width) / 12.0
 
     # Base font sizes (at 12 inches width)
-    base_main = 60
-    base_sub = 22
-    base_coords = 14
-    base_attr = 8
+    BASE_MAIN = 60
+    BASE_SUB = 22
+    BASE_COORDS = 14
+    BASE_ATTR = 8
 
     # 4. Typography - use custom fonts if provided, otherwise use default FONTS
     active_fonts = fonts or FONTS
     if active_fonts:
         # font_main is calculated dynamically later based on length
         font_sub = FontProperties(
-            fname=active_fonts["light"], size=base_sub * scale_factor
+            fname=active_fonts["light"], size=BASE_SUB * scale_factor
         )
         font_coords = FontProperties(
-            fname=active_fonts["regular"], size=base_coords * scale_factor
+            fname=active_fonts["regular"], size=BASE_COORDS * scale_factor
         )
         font_attr = FontProperties(
-            fname=active_fonts["light"], size=base_attr * scale_factor
+            fname=active_fonts["light"], size=BASE_ATTR * scale_factor
         )
     else:
         # Fallback to system fonts
         font_sub = FontProperties(
-            family="monospace", weight="normal", size=base_sub * scale_factor
+            family="monospace", weight="normal", size=BASE_SUB * scale_factor
         )
         font_coords = FontProperties(
-            family="monospace", size=base_coords * scale_factor
+            family="monospace", size=BASE_COORDS * scale_factor
         )
-        font_attr = FontProperties(family="monospace", size=base_attr * scale_factor)
+        font_attr = FontProperties(family="monospace", size=BASE_ATTR * scale_factor)
 
     # Format city name based on script type
     # Latin scripts: apply uppercase and letter spacing for aesthetic
@@ -661,7 +687,7 @@ def create_poster(
 
     # Dynamically adjust font size based on city name length to prevent truncation
     # We use the already scaled "main" font size as the starting point.
-    base_adjusted_main = base_main * scale_factor
+    base_adjusted_main = BASE_MAIN * scale_factor
     city_char_count = len(display_city)
 
     # Heuristic: If length is > 10, start reducing.
@@ -809,6 +835,9 @@ Examples:
   python create_map_poster.py -c "London" -C "UK" -t noir -d 15000              # Thames curves
   python create_map_poster.py -c "Budapest" -C "Hungary" -t copper_patina -d 8000  # Danube split
 
+  # Show coordinates point
+  python create_map_poster.py -c "Paris" -C "France" --show-point
+
   # List themes
   python create_map_poster.py --list-themes
 
@@ -843,7 +872,7 @@ def list_themes():
     for theme_name in available_themes:
         theme_path = os.path.join(THEMES_DIR, f"{theme_name}.json")
         try:
-            with open(theme_path, "r", encoding=FILE_ENCODING) as f:
+            with open(theme_path, "r") as f:
                 theme_data = json.load(f)
                 display_name = theme_data.get('name', theme_name)
                 description = theme_data.get('description', '')
@@ -867,6 +896,7 @@ Examples:
   python create_map_poster.py --city "New York" --country "USA" -l 40.776676 -73.971321 --theme neon_cyberpunk
   python create_map_poster.py --city Tokyo --country Japan --theme midnight_blue
   python create_map_poster.py --city Paris --country France --theme noir --distance 15000
+  python create_map_poster.py --city "Paris" --country "France" --show-point
   python create_map_poster.py --list-themes
         """,
     )
@@ -955,6 +985,11 @@ Examples:
         choices=["png", "svg", "pdf"],
         help="Output format for the poster (default: png)",
     )
+    parser.add_argument(
+        "--show-point",
+        action="store_true",
+        help="Show a marker at the center coordinates",
+    )
 
     args = parser.parse_args()
 
@@ -1037,6 +1072,7 @@ Examples:
                 display_city=args.display_city,
                 display_country=args.display_country,
                 fonts=custom_fonts,
+                show_point=args.show_point,
             )
 
         print("\n" + "=" * 50)
